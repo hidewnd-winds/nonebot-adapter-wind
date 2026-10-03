@@ -1,0 +1,39 @@
+name: Test and build
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.12', '3.14']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.19'
+          python-version: ${{ matrix.python }}
+      - run: uv sync --locked --extra cos --no-editable
+      - run: uv run --locked --no-editable --extra cos pytest -q
+        timeout-minutes: 2
+      - run: uv run --locked --no-editable --extra cos ruff check nonebot examples tests
+      - run: uv run --locked --no-editable --extra cos pyright nonebot/adapters/wind examples
+      - run: uv build
+      - run: uv run --locked --no-editable --extra cos twine check --strict dist/*
+      - name: Verify wheel without source tree
+        shell: bash
+        run: |
+          uv venv /tmp/wind-wheel
+          uv pip install --python /tmp/wind-wheel/bin/python dist/*.whl
+          cd /tmp
+          /tmp/wind-wheel/bin/python -c 'from nonebot.adapters.wind.qq import Adapter; from nonebot.adapters.wind import document, paragraph, render_plain_text; assert render_plain_text(document(paragraph("installed"))).text.strip() == "installed"'
+      - uses: actions/upload-artifact@v4
+        if: matrix.python == '3.12'
+        with:
+          name: distributions
+          path: dist/*
