@@ -248,19 +248,16 @@ async def _resolve_markdown_node(node: Inline | Block, publisher: ImagePublisher
     if isinstance(node, ListBlock):
         return await _resolve_markdown_list(node, publisher)
     if isinstance(node, Table):
-        return Table(
-            headers=tuple(
-                [await _resolve_markdown_inlines(cell, publisher) for cell in node.headers]
-            ),
-            rows=tuple(
-                [
-                    tuple(
-                        [await _resolve_markdown_inlines(cell, publisher) for cell in row]
-                    )
-                    for row in node.rows
-                ]
-            ),
+        headers = tuple(
+            [await _resolve_markdown_inlines(cell, publisher) for cell in node.headers]
         )
+        # Python 3.10 不支持此处嵌套的异步推导式；显式逐行处理保留发布顺序。
+        rows: list[tuple[tuple[Inline, ...], ...]] = []
+        for row in node.rows:
+            rows.append(tuple(
+                [await _resolve_markdown_inlines(cell, publisher) for cell in row]
+            ))
+        return Table(headers=headers, rows=tuple(rows))
     if isinstance(node, (Divider, CodeBlock, ButtonTable)):
         return node
     raise TypeError(f"unsupported document node: {type(node).__name__}")
@@ -300,20 +297,15 @@ async def _resolve_markdown_inlines(
 
 
 async def _resolve_markdown_list(block: ListBlock, publisher: ImagePublisher | None = None) -> ListBlock:
-    return ListBlock(
-        ordered=block.ordered,
-        items=tuple(
-            [
-                ListItem(
-                    children=await _resolve_markdown_inlines(item.children, publisher),
-                    nested=tuple(
-                        [await _resolve_markdown_list(nested, publisher) for nested in item.nested]
-                    ),
-                )
-                for item in block.items
-            ]
-        ),
-    )
+    # 与表格一致，按原顺序等待每项及子列表，兼容 Python 3.10。
+    items: list[ListItem] = []
+    for item in block.items:
+        children = await _resolve_markdown_inlines(item.children, publisher)
+        nested = tuple(
+            [await _resolve_markdown_list(child, publisher) for child in item.nested]
+        )
+        items.append(ListItem(children=children, nested=nested))
+    return ListBlock(ordered=block.ordered, items=tuple(items))
 
 
 async def _render_content(content: OutboundContent, publisher: ImagePublisher | None = None) -> tuple[QQMessage, ...]:

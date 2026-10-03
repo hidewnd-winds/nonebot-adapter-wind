@@ -76,3 +76,43 @@ def test_document_rejects_invalid_table_and_empty_button_shapes():
         link_button("仅限指定用户", "https://example.test", permission="specified")
     with pytest.raises(ValueError, match="between 1 and 6"):
         heading("invalid", level=7)
+
+
+def test_qq_nested_document_resolution_preserves_image_publish_order(monkeypatch):
+    import asyncio
+    from nonebot.adapters.wind import image
+    from nonebot.adapters.wind import qq
+
+    published = []
+    publisher = object()
+
+    async def resolve(value, actual_publisher):
+        assert actual_publisher is publisher
+        published.append(value)
+        return "https://images.example.test/" + value
+
+    monkeypatch.setattr(qq, "resolve_image_url", resolve)
+    source = document(
+        table((image("head", "header.png"), "title"), (
+            (image("first", "first.png"), "1"),
+            ("2", image("second", "second.png")),
+        )),
+        unordered_list(
+            list_item(image("top", "top.png"), ordered_list(
+                image("nested", "nested.png"),
+            )),
+            image("last", "last.png"),
+        ),
+    )
+
+    async def render():
+        return [await qq._resolve_markdown_node(node, publisher) for node in source.parts]
+
+    resolved = document(*asyncio.run(render()))
+    assert published == ["header.png", "first.png", "second.png", "top.png", "nested.png", "last.png"]
+    expected = render_markdown(source).text
+    for name in published:
+        expected = expected.replace("(" + name + ")", "(https://images.example.test/" + name + ")")
+    assert render_markdown(resolved).text == expected
+    # 转换返回新节点，不能改写用户复用的原 Document。
+    assert "https://images.example.test/" not in render_markdown(source).text
